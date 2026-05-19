@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Digital Persona Autofill Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=style_version) }}">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Local Persona Agent</p>
+          <h1>디지털 페르소나 문서 자동화</h1>
+          <p class="subhead">
+            개인 정보를 로컬 DB에 저장하고, 업로드한 지원 양식을 Ollama 기반 로컬 AI로 해석해 자동입력 테스트를 진행합니다.
+          </p>
+        </div>
+        <div class="status-board">
+          <div class="status-item model-status-item">
+            <label class="model-select-label" for="modelSelect">Configured Model</label>
+            <select id="modelSelect" name="model">
+              <option value="{{ model_name }}">{{ model_name }}</option>
+            </select>
+            <strong id="modelName">{{ model_name }}</strong>
+            <span id="modelDescription" class="model-description">로컬 모델 정보를 불러오는 중입니다.</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">LLM Status</span>
+            <strong id="llmStatus">확인 중</strong>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Stored Profile</span>
+            <strong id="profileStatus">불러오는 중</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <div class="section-header">
+            <div>
+              <h2>로컬 프로필 DB</h2>
+              <p>한 번 저장한 개인정보를 모든 양식 작성에 재사용합니다.</p>
+            </div>
+            <div class="button-row">
+              <button type="button" class="secondary" id="loadSeedButton">샘플 불러오기</button>
+              <button type="button" id="saveProfileButton">DB 저장</button>
+            </div>
+          </div>
+
+          <form id="profileForm" class="profile-grid">
+            <label>
+              <span>이름</span>
+              <input type="text" name="이름">
+            </label>
+            <label>
+              <span>생년월일</span>
+              <input type="text" name="생년월일" placeholder="2004-10-31">
+            </label>
+            <label>
+              <span>나이</span>
+              <input type="text" name="나이">
+            </label>
+            <label>
+              <span>이메일</span>
+              <input type="email" name="이메일">
+            </label>
+            <label>
+              <span>전화번호</span>
+              <input type="text" name="전화번호">
+            </label>
+            <label class="full-width">
+              <span>주소</span>
+              <input type="text" name="주소">
+            </label>
+            <label>
+              <span>희망직무</span>
+              <input type="text" name="희망직무">
+            </label>
+            <label class="full-width">
+              <span>취미</span>
+              <input type="text" name="취미" placeholder="쉼표로 구분">
+            </label>
+            <label class="full-width">
+              <span>기술스택</span>
+              <input type="text" name="기술스택" placeholder="쉼표로 구분">
+            </label>
+            <label class="full-width">
+              <span>자격증</span>
+              <input type="text" name="자격증" placeholder="쉼표로 구분">
+            </label>
+            <label class="full-width">
+              <span>경력</span>
+              <textarea name="경력" rows="3"></textarea>
+            </label>
+
+            <div class="subsection full-width">
+              <h3>학력</h3>
+              <div class="education-grid">
+                <label>
+                  <span>대학교</span>
+                  <input type="text" name="학력.대학교">
+                </label>
+                <label>
+                  <span>전공</span>
+                  <input type="text" name="학력.전공">
+                </label>
+                <label>
+                  <span>학점</span>
+                  <input type="text" name="학력.학점">
+                </label>
+                <label>
+                  <span>졸업년도</span>
+                  <input type="text" name="학력.졸업년도">
+                </label>
+              </div>
+            </div>
+
+            <label class="full-width">
+              <span>추가메모</span>
+              <textarea name="추가메모" rows="4" placeholder="포트폴리오, 프로젝트 키워드, 강조하고 싶은 포인트 등을 저장"></textarea>
+            </label>
+          </form>
+
+          <div class="json-preview">
+            <div class="section-header compact">
+              <h3>저장 JSON 미리보기</h3>
+              <button type="button" class="secondary small" id="toggleJsonButton">표시</button>
+            </div>
+            <pre id="profileJsonPreview" hidden></pre>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-header">
+            <div>
+              <h2>문서 업로드 및 자동 작성</h2>
+              <p>PDF나 DOCX를 업로드하면 문서를 해석하고, 채워진 결과 파일을 생성합니다.</p>
+            </div>
+          </div>
+
+          <form id="uploadForm" class="upload-form">
+            <label class="full-width">
+              <span>지원 양식 파일</span>
+              <input type="file" name="file" accept=".txt,.md,.json,.docx,.pdf">
+            </label>
+            <label class="full-width">
+              <span>추가 지시</span>
+              <textarea name="instruction" rows="3" placeholder="예: 게임 클라이언트 직무에 맞게 서술형 답변을 조금 더 실무적으로 작성"></textarea>
+            </label>
+            <div class="button-row">
+              <button type="submit" id="runAutofillButton">파일 분석 및 자동 작성</button>
+            </div>
+          </form>
+
+          <div class="inline-meta">
+            <span>지원 형식: txt, md, json, docx, pdf</span>
+            <span id="uploadStatus">대기 중</span>
+          </div>
+
+          <div class="progress-card" id="uploadProgressCard" hidden>
+            <div class="section-header compact">
+              <h3>처리 진행률</h3>
+              <span id="progressMeta">대기 중</span>
+            </div>
+            <div class="progress-bar-track" aria-hidden="true">
+              <div class="progress-bar-fill" id="progressBarFill"></div>
+            </div>
+            <div class="progress-row">
+              <strong id="progressPercent">0%</strong>
+              <span id="progressStage">업로드 대기 중</span>
+            </div>
+            <div class="progress-helper">
+              <span id="progressElapsed">경과 0초</span>
+              <span id="progressEta">예상 시간 계산 중</span>
+            </div>
+            <div class="progress-steps" id="progressSteps">
+              <span class="progress-step" data-stage-group="queued">업로드 확인</span>
+              <span class="progress-step" data-stage-group="parse_document">문서 추출</span>
+              <span class="progress-step" data-stage-group="generate_ai">AI 생성</span>
+              <span class="progress-step" data-stage-group="export_result">결과 문서 생성</span>
+              <span class="progress-step" data-stage-group="completed">완료</span>
+            </div>
+          </div>
+
+          <div class="result-summary" id="uploadResultSummary">
+            아직 업로드 결과가 없습니다.
+          </div>
+
+          <div class="download-block">
+            <div class="section-header compact">
+              <h3>다운로드</h3>
+              <span id="downloadHint">업로드 후 생성됩니다.</span>
+            </div>
+            <div id="downloadButtons" class="button-row"></div>
+          </div>
+
+          <div class="preview-block">
+            <div class="section-header compact">
+              <h3>실시간 채우기 미리보기</h3>
+              <span id="filledResultMeta">아직 생성된 결과가 없습니다.</span>
+            </div>
+            <div id="liveFillPreview" class="live-fill-preview">
+              <div class="live-fill-empty">업로드하면 원본 문항을 읽고 채워지는 과정을 표시합니다.</div>
+            </div>
+            <pre id="renderedDraft">아직 생성된 결과가 없습니다.</pre>
+            <div id="answerList" class="result-list"></div>
+            <div id="missingBlock" class="missing-block" hidden>
+              <h4>추가 확인 필요</h4>
+              <ul id="missingList" class="plain-list"></ul>
+            </div>
+          </div>
+
+          <div class="preview-block">
+            <div class="section-header compact">
+              <h3>에이전트 입력용 문서 미리보기</h3>
+              <span id="documentMeta">아직 업로드된 문서가 없습니다.</span>
+            </div>
+            <pre id="documentPreview"></pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js', v=app_js_version) }}"></script>
+  </body>
+</html>
