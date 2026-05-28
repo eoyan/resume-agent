@@ -27,6 +27,7 @@ RUNTIME_STORAGE_DIR = DATA_DIR / "runtime_storage"
 UPLOADS_DIR = RUNTIME_STORAGE_DIR / "uploads"
 GENERATED_DIR = RUNTIME_STORAGE_DIR / "generated"
 SEED_PATH = DATA_DIR / "seed" / "my_info_data.json"
+EXAMPLE_SEED_PATH = DATA_DIR / "seed" / "my_info_data.example.json"
 DB_PATH = RUNTIME_STORAGE_DIR / "persona.db"
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -94,11 +95,20 @@ def utc_now_iso() -> str:
 def ensure_seed_profile() -> None:
     if repository.get_profile() is not None:
         return
-    if not SEED_PATH.exists():
+    seed_path = active_seed_path()
+    if seed_path is None:
         repository.save_profile(DEFAULT_PROFILE_TEMPLATE, source="empty")
         return
-    raw = json.loads(SEED_PATH.read_text(encoding="utf-8"))
+    raw = json.loads(seed_path.read_text(encoding="utf-8"))
     repository.save_profile(normalize_profile_payload(raw), source="seed")
+
+
+def active_seed_path() -> Optional[Path]:
+    if SEED_PATH.exists():
+        return SEED_PATH
+    if EXAMPLE_SEED_PATH.exists():
+        return EXAMPLE_SEED_PATH
+    return None
 
 
 def serialize_state() -> dict:
@@ -259,8 +269,10 @@ def prepare_upload_request() -> Dict[str, Any]:
         raise UploadWorkflowError("file_required", "업로드할 파일을 선택하세요.", 400)
 
     original_name = uploaded_file.filename.strip()
-    safe_name = secure_filename(original_name) or "uploaded_document"
     extension = Path(original_name).suffix.lower()
+    safe_name = secure_filename(original_name) or "uploaded_document"
+    if extension and not Path(safe_name).suffix:
+        safe_name = f"{safe_name}{extension}"
     stored_name = f"{uuid.uuid4().hex}_{safe_name}"
     stored_path = UPLOADS_DIR / stored_name
     uploaded_file.save(stored_path)
@@ -617,10 +629,11 @@ def save_profile():
 
 @app.post("/api/profile/load-seed")
 def load_seed_profile():
-    if not SEED_PATH.exists():
+    seed_path = active_seed_path()
+    if seed_path is None:
         return jsonify({"error": "seed_profile_not_found"}), 404
 
-    raw = json.loads(SEED_PATH.read_text(encoding="utf-8"))
+    raw = json.loads(seed_path.read_text(encoding="utf-8"))
     result = repository.save_profile(normalize_profile_payload(raw), source="seed")
     return jsonify(
         {

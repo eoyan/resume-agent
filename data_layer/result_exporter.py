@@ -838,7 +838,11 @@ class ResultExporter:
             if not isinstance(item, dict):
                 continue
             answer_text = str(item.get("answer", "")).strip()
-            if not answer_text:
+            if (
+                not answer_text
+                or self._is_echo_prompt_answer(item, answer_text)
+                or self._looks_like_unfilled_prompt_answer(answer_text)
+            ):
                 continue
             for key in [
                 str(item.get("question", "")).strip(),
@@ -879,7 +883,9 @@ class ResultExporter:
             if value and normalized:
                 label_values[normalized] = value
 
-        label_values.update(answer_values)
+        for key, value in answer_values.items():
+            if key not in label_values:
+                label_values[key] = value
         return label_values
 
     def _fill_docx_label_tables(self, document, label_values: Dict[str, str]) -> None:
@@ -906,6 +912,7 @@ class ResultExporter:
 
         table_index = 0
         used_prompt_keys: set[str] = set()
+        filled_tables: set[int] = set()
         for paragraph in document.paragraphs:
             paragraph_text = paragraph.text.strip()
             if not paragraph_text:
@@ -930,8 +937,49 @@ class ResultExporter:
                 if self._is_meaningful_text(target_cell.text):
                     continue
                 self._set_docx_cell_text(target_cell, answer_text)
+                filled_tables.add(table_index - 1)
                 if matched_key:
                     used_prompt_keys.add(matched_key)
+                break
+
+        self._fill_remaining_docx_prompt_blocks(
+            document,
+            ordered_prompt_answers,
+            used_prompt_keys,
+            filled_tables,
+        )
+
+    def _fill_remaining_docx_prompt_blocks(
+        self,
+        document,
+        ordered_prompt_answers: List[tuple[str, str]],
+        used_prompt_keys: set[str],
+        filled_tables: set[int],
+    ) -> None:
+        remaining_answers = [
+            (key, answer)
+            for key, answer in ordered_prompt_answers
+            if key not in used_prompt_keys and answer
+        ]
+        if not remaining_answers:
+            return
+
+        answer_index = 0
+        for table_index, table in enumerate(document.tables):
+            if table_index in filled_tables:
+                continue
+            if not self._is_docx_blank_answer_block(table):
+                continue
+
+            target_cell = table.rows[0].cells[0]
+            if self._is_meaningful_text(target_cell.text):
+                continue
+
+            key, answer = remaining_answers[answer_index]
+            self._set_docx_cell_text(target_cell, answer)
+            used_prompt_keys.add(key)
+            answer_index += 1
+            if answer_index >= len(remaining_answers):
                 break
 
     def _fill_docx_inline_placeholders(self, document, label_values: Dict[str, str]) -> None:
@@ -953,13 +1001,16 @@ class ResultExporter:
         for item in autofill_result.get("answers", []):
             if not isinstance(item, dict):
                 continue
-            question = str(item.get("question", "")).strip()
             answer = str(item.get("answer", "")).strip()
-            if not question or not answer:
+            if (
+                not answer
+                or self._is_echo_prompt_answer(item, answer)
+                or self._looks_like_unfilled_prompt_answer(answer)
+                or not self._looks_like_narrative_answer_item(item)
+            ):
                 continue
-            normalized = self._normalize_label(question)
-            if normalized:
-                prompt_answers[normalized] = answer
+            for key in self._prompt_answer_keys(item):
+                prompt_answers.setdefault(key, answer)
         return prompt_answers
 
     def _build_ordered_prompt_answers(self, autofill_result: Dict[str, Any]) -> List[tuple[str, str]]:
@@ -967,15 +1018,108 @@ class ResultExporter:
         for item in autofill_result.get("answers", []):
             if not isinstance(item, dict):
                 continue
-            question = str(item.get("question", "")).strip()
             answer = str(item.get("answer", "")).strip()
-            normalized = self._normalize_label(question)
-            if not normalized or not answer:
+            if (
+                not answer
+                or self._is_echo_prompt_answer(item, answer)
+                or self._looks_like_unfilled_prompt_answer(answer)
+            ):
                 continue
-            if not self._looks_like_prompt_paragraph(question):
+            keys = self._prompt_answer_keys(item)
+            if not keys:
                 continue
-            ordered.append((normalized, answer))
+            if not self._looks_like_narrative_answer_item(item):
+                continue
+            question = str(item.get("question", "")).strip()
+            if question and self._looks_like_prompt_paragraph(question):
+                ordered.append((keys[0], answer))
+                continue
+            ordered.append((keys[0], answer))
         return ordered
+
+    def _prompt_answer_keys(self, item: Dict[str, Any]) -> List[str]:
+        keys: List[str] = []
+        for value in [
+            item.get("question", ""),
+            item.get("section", ""),
+            item.get("field_key", ""),
+        ]:
+            normalized = self._normalize_label(str(value).strip())
+            if normalized and normalized not in keys:
+                keys.append(normalized)
+        return keys
+
+    def _is_echo_prompt_answer(self, item: Dict[str, Any], answer: str) -> bool:
+        answer_key = self._normalize_label(answer)
+        if not answer_key:
+            return True
+        for value in [
+            item.get("question", ""),
+            item.get("section", ""),
+            item.get("field_key", ""),
+        ]:
+            value_key = self._normalize_label(str(value).strip())
+            if value_key and answer_key == value_key:
+                return True
+        return False
+
+    def _looks_like_unfilled_prompt_answer(self, answer: str) -> bool:
+        text = str(answer or "").strip()
+        if not text:
+            return True
+        prompt_markers = [
+            "작성해 주세요",
+            "작성해주세요",
+            "입력해 주세요",
+            "입력해주세요",
+        ]
+        if any(marker in text for marker in prompt_markers):
+            return True
+        if "|" in text and len(text) <= 80:
+            return True
+        return False
+
+    def _looks_like_narrative_answer_item(self, item: Dict[str, Any]) -> bool:
+        text = " ".join(
+            str(item.get(key, "")).strip()
+            for key in ("question", "section", "field_key")
+            if str(item.get(key, "")).strip()
+        )
+        normalized = self._normalize_label(text)
+        if not normalized:
+            return False
+
+        non_narrative_keywords = [
+            "협업툴",
+            "사용가능언어",
+            "보유기술스택",
+            "기술스택",
+            "보유자격증",
+            "관련자격증",
+            "github",
+            "블로그",
+            "어학점수",
+            "수상경력",
+            "병역",
+            "추가확인",
+            "자기소개및서술형문항",
+        ]
+        if any(keyword in normalized for keyword in non_narrative_keywords):
+            return False
+
+        narrative_keywords = [
+            "소개",
+            "강점",
+            "프로젝트",
+            "경험",
+            "지원동기",
+            "동기",
+            "포부",
+            "selfintroduction",
+            "motivation",
+            "futureplan",
+        ]
+        return any(keyword in normalized for keyword in narrative_keywords)
 
     def _match_prompt_answer(
         self,

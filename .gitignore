@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local/runtime data
+data_layer/runtime_storage/
+data_layer/seed/my_info_data.json
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+tempCodeRunnerFile.py
+
+# Generated preview/render artifacts
+data_layer/samples/render_output/
+data_layer/samples/render_output_autofill_template/
